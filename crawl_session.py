@@ -1,10 +1,19 @@
+import os
+import psycopg2
+from psycopg2.extras import Json
+from dotenv import load_dotenv
+
+load_dotenv()  # allows you to use a local .env file for dev
+
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
+
 import requests
 from bs4 import BeautifulSoup
 import re
 import json
 import time
 import datetime
-import os
+
 from config import base_url, session_year, sleep_between_requests
 from bill_scraper import scrape_bill
 from utils import log_error
