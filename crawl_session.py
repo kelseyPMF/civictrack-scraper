@@ -24,6 +24,7 @@ def crawl_session():
 
     for bill_type in bill_types:
         list_url = f"{base_url}/measurelist.aspx?year={session_year}&billtype={bill_type}"
+        print (list_url)
         try:
             response = requests.get(list_url, timeout=10)
             response.raise_for_status()
