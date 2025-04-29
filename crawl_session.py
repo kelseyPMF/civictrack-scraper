@@ -10,91 +10,53 @@ SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 import requests
 from bs4 import BeautifulSoup
 import re
-import json
-import time
 import datetime
+import json
+import os
 
-from config import base_url, session_year, sleep_between_requests
-from bill_scraper import scrape_bill
-from utils import log_error
+# Target URL
+url = "https://www.capitol.hawaii.gov/advreports/advreport.aspx?year=2025&report=deadline&active=true&rpt_type=&measuretype=hb&title=House%20Bills%20Introduced"
 
-def crawl_session():
-    bill_types = ["HB", "SB"]
-    all_bills = []
+# Request page
+response = requests.get(url)
+soup = BeautifulSoup(response.text, "html.parser")
 
-    for bill_type in bill_types:
-        list_url = f"{base_url}/measurelist.aspx?year={session_year}&billtype={bill_type}"
-        print (list_url)
-        try:
-            response = requests.get(list_url, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
+# Prepare data
+bill_data = []
 
-            bill_links = soup.find_all("a", href=re.compile("measure_indiv.aspx"))
-            for link in bill_links:
-                href = link['href']
-                match = re.search(r"billtype=(\w+)&billnumber=(\d+)&year=(\d+)", href)
-                if match:
-                    billtype = match.group(1)
-                    billnumber = match.group(2)
-                    bill = scrape_bill(billtype, billnumber)
-                    if bill:
-                        all_bills.append(bill)
-                time.sleep(sleep_between_requests)
+rows = soup.select("table#ctl00_ContentPlaceHolder1_gridMain tr")[1:]  # skip header row
 
-        except Exception as e:
-            log_error(f"Error fetching bill list {bill_type}: {e}")
+for row in rows:
+    cols = row.find_all("td")
+    if len(cols) >= 8:
+        bill_number = cols[0].get_text(strip=True)
+        title = cols[1].get_text(strip=True)
+        current_referral = cols[2].get_text(strip=True)
+        intro_date = cols[4].get_text(strip=True)
+        current_status = cols[5].get_text(strip=True)
+        status_date = cols[6].get_text(strip=True)
+        last_action = cols[7].get_text(strip=True)
 
-    # Save output
-    output_folder = "scraped_data"
-    os.makedirs(output_folder, exist_ok=True)
-    today = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
-    output_path = os.path.join(output_folder, f"hawaii_bills_{today}.json")
-    # Insert into Supabase
-    conn = psycopg2.connect(SUPABASE_DB_URL)
-    cur = conn.cursor()
+        committees = re.findall(r'\b[A-Z]{2,4}\b', current_referral)
 
-    for bill in all_bills:
-        cur.execute("""
-            INSERT INTO bills (
-                bill_number, title, description, year,
-                committees, status, hearings,
-                testimony_link, link, last_updated
-            ) VALUES (
-                %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s
-            )
-            ON CONFLICT (bill_number, year) DO UPDATE
-            SET
-                title = EXCLUDED.title,
-                description = EXCLUDED.description,
-                committees = EXCLUDED.committees,
-                status = EXCLUDED.status,
-                hearings = EXCLUDED.hearings,
-                testimony_link = EXCLUDED.testimony_link,
-                link = EXCLUDED.link,
-                last_updated = EXCLUDED.last_updated
-        """, (
-            bill["bill_number"],
-            bill["title"],
-            bill["description"],
-            bill["year"],
-            Json(bill["committees"]),
-            bill["status"],
-            Json(bill["hearings"]),
-            bill["testimony_link"],
-            bill["link"],
-            bill["last_updated"]
-        ))
-    
-    conn.commit()
-    cur.close()
-    conn.close()
-    print(f"✅ {len(all_bills)} bills inserted into Supabase.")
+        bill_data.append({
+            "bill_number": bill_number,
+            "title": title,
+            "description": last_action,
+            "year": 2025,
+            "committees": committees,
+            "status": current_status,
+            "hearings": [],  # not available on this summary page
+            "testimony_link": f"https://www.capitol.hawaii.gov/measure_submittestimony.aspx?billtype={bill_number[:2]}&billnumber={bill_number[2:]}&year=2025",
+            "link": f"https://www.capitol.hawaii.gov/measure_indiv.aspx?billtype={bill_number[:2]}&billnumber={bill_number[2:]}&year=2025",
+            "last_updated": datetime.datetime.now().isoformat()
+        })
 
+# Save to file or print
+os.makedirs("scraped_data", exist_ok=True)
+now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+with open(f"scraped_data/hb_bills_{now}.json", "w") as f:
+    json.dump(bill_data, f, indent=2)
 
-    print(f"Scraped {len(all_bills)} bills successfully. Data saved to {output_path}")
+print(f"✅ Scraped {len(bill_data)} House bills successfully.")
 
-if __name__ == "__main__":
-    crawl_session()
