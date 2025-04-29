@@ -49,8 +49,49 @@ def crawl_session():
     os.makedirs(output_folder, exist_ok=True)
     today = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
     output_path = os.path.join(output_folder, f"hawaii_bills_{today}.json")
-    with open(output_path, "w") as f:
-        json.dump(all_bills, f, indent=2)
+    # Insert into Supabase
+    conn = psycopg2.connect(SUPABASE_DB_URL)
+    cur = conn.cursor()
+
+    for bill in all_bills:
+        cur.execute("""
+            INSERT INTO bills (
+                bill_number, title, description, year,
+                committees, status, hearings,
+                testimony_link, link, last_updated
+            ) VALUES (
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s
+            )
+            ON CONFLICT (bill_number, year) DO UPDATE
+            SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                committees = EXCLUDED.committees,
+                status = EXCLUDED.status,
+                hearings = EXCLUDED.hearings,
+                testimony_link = EXCLUDED.testimony_link,
+                link = EXCLUDED.link,
+                last_updated = EXCLUDED.last_updated
+        """, (
+            bill["bill_number"],
+            bill["title"],
+            bill["description"],
+            bill["year"],
+            Json(bill["committees"]),
+            bill["status"],
+            Json(bill["hearings"]),
+            bill["testimony_link"],
+            bill["link"],
+            bill["last_updated"]
+        ))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"✅ {len(all_bills)} bills inserted into Supabase.")
+
 
     print(f"Scraped {len(all_bills)} bills successfully. Data saved to {output_path}")
 
